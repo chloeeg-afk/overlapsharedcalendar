@@ -1,0 +1,4 @@
+[build]
+  base = "overlap 2"
+  publish = "public"
+  functions = "netlify/functions"
