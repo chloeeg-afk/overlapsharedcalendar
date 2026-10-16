@@ -102,7 +102,7 @@ function fmt(t){if(!t)return"";const[h,m]=t.split(":").map(Number);return((h%12)
 
 /* ---------- storage ---------- */
 function stat(m){const s=$("stat");s.replaceChildren();if(m)s.append(el("div",{class:"banner",style:"background:var(--card);color:var(--mut);font-size:12px;padding:6px 14px;margin-top:10px"},m))}
-async function api(method,body){const r=await fetch("/api",{method,headers:{"content-type":"application/json"},body:body?JSON.stringify(body):undefined});if(!r.ok)throw new Error(r.status);return r.json()}
+async function api(method,body,q){const r=await fetch("/api"+(q||""),{method,headers:{"content-type":"application/json"},body:body?JSON.stringify({...body,who:me}):undefined});if(!r.ok)throw new Error(r.status);return r.json()}
 let busy=0;
 async function pull(){if(busy)return;try{const s=await api("GET");if(busy)return;stat("");const sig=JSON.stringify([s.events,s.people,s.days]);if(sig===lastSig)return;events=s.events;Object.keys(s.people).forEach(n=>people[n]=s.people[n]);days=s.days;const a=document.activeElement;if(a&&a.tagName==="INPUT"&&a.closest("#panel")&&(a.type==="checkbox"||a.value))return;lastSig=sig;render()}catch(e){stat("Can't reach the calendar right now. Retrying...")}}
 async function push(kind,id,data){busy++;try{await api("POST",{kind,id,data});stat("")}catch(e){stat("Couldn't save that. Check your connection and try again.")}finally{busy--}}
@@ -113,6 +113,25 @@ async function start(){
 }
 async function saveEv(ev){const i=events.findIndex(e=>e.id===ev.id);if(i>=0)events[i]=ev;else events.push(ev);render();const{id,...r}=ev;await push("event",id,r)}
 async function savePerson(n,c){people[n]={color:c};await push("person",n,{color:c})}
+function u8(b){const p="=".repeat((4-b.length%4)%4);const r=atob((b+p).replace(/-/g,"+").replace(/_/g,"/"));return Uint8Array.from([...r].map(c=>c.charCodeAt(0)))}
+function pushBtn(){let on=false;try{on=localStorage.getItem("calPush")==="1"&&"Notification" in window&&Notification.permission==="granted"}catch(e){}
+  if(on)return document.createTextNode("");
+  return el("button",{class:"btn blue",style:"padding:6px 12px;font-size:12px",onclick:enablePush},"\u{1F514} Notifications")}
+async function enablePush(){
+  try{
+    if(!("serviceWorker" in navigator)||!("PushManager" in window)){stat("To get notifications, add Overlap to your home screen first, then open it from there and tap Notifications again.");return}
+    const perm=await Notification.requestPermission();
+    if(perm!=="granted"){stat("Notifications are blocked. Turn them on for Overlap in your phone's settings.");return}
+    const reg=await navigator.serviceWorker.register("/sw.js");await navigator.serviceWorker.ready;
+    const {key}=await api("GET",null,"?vapid=1");
+    const sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:u8(key)});
+    const h=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(sub.endpoint));
+    const id=me+"-"+[...new Uint8Array(h)].slice(0,8).map(b=>b.toString(16).padStart(2,"0")).join("");
+    await api("POST",{kind:"sub",id,data:{who:me,sub:sub.toJSON()}});
+    try{localStorage.setItem("calPush","1")}catch(e){}
+    stat("Notifications are on.");setTimeout(()=>stat(""),3000);render();
+  }catch(e){stat("Couldn't turn on notifications. Try again.")}
+}
 async function saveDay(k,list){days[k]={comments:list};render();await push("day",k,{comments:list})}
 
 /* ---------- gate ---------- */
@@ -131,7 +150,7 @@ function enter(){$("gate").hidden=true;$("app").hidden=false;render()}
 /* ---------- render ---------- */
 function render(){
   if(!me)return;
-  $("me").replaceChildren(dot(me),"Hi, "+me+" ",el("button",{class:"btn ghost",style:"padding:6px 12px;font-size:12px",onclick:()=>{pick=me;pickColor=col(me);gate()}},"Switch"));
+  $("me").replaceChildren(dot(me),"Hi, "+me+" ",el("button",{class:"btn ghost",style:"padding:6px 12px;font-size:12px",onclick:()=>{pick=me;pickColor=col(me);gate()}},"Switch"),pushBtn());
   // top banner: events waiting on my yes/no
   const pend=events.filter(e=>e.owner!==me&&!(e.resp&&e.resp[me])&&e.date>=iso(new Date())).sort((a,b)=>a.date.localeCompare(b.date))[0];
   $("banner").replaceChildren();
